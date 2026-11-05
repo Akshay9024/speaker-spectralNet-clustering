@@ -16,8 +16,8 @@ STAGES = ("segment", "embed", "cluster", "evaluate")
 
 
 def train_siamese(cfgs: list[Config]) -> Path:
-    """Pool cached embeddings across the given (dev) configs and fit the global Siamese net."""
-    pools = []
+    """Build supervised (embeddings, speaker-label) records from dev configs and fit the Siamese."""
+    records = []
     for cfg in cfgs:
         for rec in recording_ids(cfg):
             emb_path = _artifact(cfg, "embeddings", rec, ".npy")
@@ -26,16 +26,15 @@ def train_siamese(cfgs: list[Config]) -> Path:
                     f"{emb_path} missing; run `run.py run --stages segment,embed --config ...` on "
                     f"{cfg.dataset.name} before training the Siamese net"
                 )
-            emb = np.load(emb_path)
-            if emb.shape[0]:
-                pools.append(emb)
-    if not pools:
+            payload = stage_segment(cfg, rec)
+            turns = rttm.read_rttm(reference_rttm_path(cfg, rec))
+            labels = spectralnet.segment_labels(payload["segments"], turns)
+            records.append((np.load(emb_path), labels))
+    if not records:
         raise RuntimeError("no embeddings found to train the Siamese net")
-    pooled = np.vstack(pools)
     base = cfgs[0]
     out = Path(base.root) / base.clustering.siamese_weights
-    print(f"training Siamese on {pooled.shape[0]:,} pooled embeddings -> {out}", flush=True)
-    spectralnet.train_siamese(pooled, base.clustering, resolve_device(base.clustering.device), out)
+    spectralnet.train_siamese(records, base.clustering, resolve_device(base.clustering.device), out)
     return out
 
 

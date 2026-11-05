@@ -1,13 +1,17 @@
-"""Global Siamese training for the SpectralNet affinity metric (self-supervised kNN pairs)."""
+"""Global Siamese training for the SpectralNet affinity metric.
+
+Supervised: pairs are built from reference speaker labels (same speaker -> positive,
+different speaker -> negative) within each recording, then pooled across recordings.
+"""
 
 from __future__ import annotations
 
 import random
+from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
 import torch
-from sklearn.neighbors import NearestNeighbors
 from torch.utils.data import DataLoader, Dataset, random_split
 
 from ..config import ClusteringConfig
@@ -22,25 +26,36 @@ def seed_everything(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def _knn_pairs(x: np.ndarray, n_neighbors: int) -> np.ndarray:
-    """(anchor, other, label) index triples: n_neighbors positives and n_neighbors negatives each."""
-    n = len(x)
-    all_idx = np.arange(n)
-    nbrs = NearestNeighbors(n_neighbors=n_neighbors + 1, algorithm="ball_tree").fit(x)
-    _, neighbors = nbrs.kneighbors(x)
+def segment_labels(segments: list, turns: list) -> list[str | None]:
+    """Speaker of each segment: the reference turn with the most overlap on its window."""
+    labels: list[str | None] = []
+    for s, e, _ in segments:
+        best, best_overlap = None, 0.0
+        for t in turns:
+            overlap = min(e, t.end) - max(s, t.start)
+            if overlap > best_overlap:
+                best_overlap, best = overlap, t.speaker
+        labels.append(best)
+    return labels
 
-    pairs = np.empty((n * 2 * n_neighbors, 3), dtype=np.int64)
-    cursor = 0
-    for i in range(n):
-        pos = neighbors[i, 1 : n_neighbors + 1]
-        non = np.setdiff1d(all_idx, neighbors[i], assume_unique=False)
-        neg = np.random.choice(non, n_neighbors, replace=len(non) < n_neighbors)
-        for j in pos:
-            pairs[cursor] = (i, j, 1)
-            cursor += 1
-        for j in neg:
-            pairs[cursor] = (i, j, 0)
-            cursor += 1
+
+def _supervised_pairs(labels: list[str | None], n_per: int, offset: int, rng) -> list[tuple[int, int, int]]:
+    """Same/different-speaker index pairs within one recording (indices shifted by offset)."""
+    by_speaker: dict[str, list[int]] = defaultdict(list)
+    for i, lab in enumerate(labels):
+        if lab is not None:
+            by_speaker[lab].append(i)
+    if len(by_speaker) < 2:  # need >=2 speakers to form negatives
+        return []
+    valid = [i for i, lab in enumerate(labels) if lab is not None]
+    pairs: list[tuple[int, int, int]] = []
+    for i in valid:
+        same = [j for j in by_speaker[labels[i]] if j != i]
+        diff = [j for j in valid if labels[j] != labels[i]]
+        for j in rng.choice(same, min(n_per, len(same)), replace=False) if same else []:
+            pairs.append((offset + i, offset + int(j), 1))
+        for j in rng.choice(diff, min(n_per, len(diff)), replace=False) if diff else []:
+            pairs.append((offset + i, offset + int(j), 0))
     return pairs
 
 
@@ -57,16 +72,9 @@ class _PairDataset(Dataset):
         return self.x[a], self.x[b], torch.tensor(float(label))
 
 
-def train_siamese(
-    embeddings: np.ndarray, cfg: ClusteringConfig, device: str, out_path: Path
-) -> SiameseNetModel:
-    """Train the Siamese metric net on pooled embeddings and save its weights."""
-    seed_everything(cfg.seed)
+def _fit_siamese(x: torch.Tensor, pairs: np.ndarray, cfg: ClusteringConfig, device: str) -> SiameseNetModel:
     sc = cfg.siamese
-    x = torch.as_tensor(embeddings, dtype=torch.float32, device=device)
     net = SiameseNetModel(sc.hiddens, input_dim=x.shape[1]).to(device)
-
-    pairs = _knn_pairs(embeddings, sc.n_neighbors)
     dataset = _PairDataset(x, pairs)
     n_train = int(0.9 * len(dataset))
     train_set, valid_set = random_split(dataset, [n_train, len(dataset) - n_train])
@@ -100,9 +108,36 @@ def train_siamese(
         print(f"  siamese epoch {epoch + 1}/{sc.epochs}  valid_loss={valid_loss:.6f}  lr={lr:.2e}", flush=True)
         if lr <= sc.min_lr:
             break
+    return net
 
+
+def train_siamese(records: list[tuple[np.ndarray, list]], cfg: ClusteringConfig, device: str,
+                  out_path: Path) -> SiameseNetModel:
+    """Train the Siamese on supervised same/different-speaker pairs pooled across recordings.
+
+    records: list of (embeddings[N,D], per-segment speaker labels[N]) for each recording.
+    """
+    seed_everything(cfg.seed)
+    rng = np.random.default_rng(cfg.seed)
+    mats, pair_blocks, offset = [], [], 0
+    for emb, labels in records:
+        if emb.shape[0] == 0:
+            continue
+        pair_blocks.extend(_supervised_pairs(labels, cfg.siamese.n_neighbors, offset, rng))
+        mats.append(emb)
+        offset += emb.shape[0]
+    if not pair_blocks:
+        raise RuntimeError("no supervised pairs built (need recordings with >=2 labelled speakers)")
+
+    x = torch.as_tensor(np.vstack(mats), dtype=torch.float32, device=device)
+    pairs = np.asarray(pair_blocks, dtype=np.int64)
+    n_pos = int((pairs[:, 2] == 1).sum())
+    print(f"supervised pairs: {len(pairs):,} ({n_pos:,} positive / {len(pairs) - n_pos:,} negative) "
+          f"over {x.shape[0]:,} segments", flush=True)
+
+    net = _fit_siamese(x, pairs, cfg, device)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save({"state_dict": net.state_dict(), "hiddens": sc.hiddens,
+    torch.save({"state_dict": net.state_dict(), "hiddens": cfg.siamese.hiddens,
                 "input_dim": x.shape[1], "seed": cfg.seed}, out_path)
     return net
 
