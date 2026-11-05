@@ -41,23 +41,47 @@ class SingleSpeakerConfig:
 
 
 @dataclass
+class SiameseConfig:
+    hiddens: list[int] = field(default_factory=lambda: [128, 128, 64])
+    epochs: int = 30
+    lr: float = 1e-3
+    lr_decay: float = 0.1
+    min_lr: float = 1e-7
+    patience: int = 10
+    n_neighbors: int = 2  # positive pairs per anchor; equal number of random negatives
+    batch_size: int = 128
+
+
+@dataclass
+class SpectralConfig:
+    hidden: list[int] = field(default_factory=lambda: [128, 128])  # output dim K appended at runtime
+    epochs: int = 30
+    lr: float = 1e-3
+    lr_decay: float = 0.1
+    min_lr: float = 1e-8
+    patience: int = 10
+
+
+@dataclass
 class ClusteringConfig:
-    # "unnormalized" is Park et al. eq. (7); "sym_norm" is the I - D^-1/2 A D^-1/2 variant.
+    """SpectralNet backend: learned Siamese affinity, eigengap count, spectral-map labels."""
+
+    # "unnormalized" is L = D - W; "sym_norm" is I - D^-1/2 W D^-1/2.
     laplacian: str = "unnormalized"
-    p_min: int = 1
-    p_max_ratio: float = 0.25
-    p_max_abs: int | None = None
-    p_stride: int = 1
     k_max: int = 10
-    zero_diagonal: bool = True
     eps: float = 1e-10
     device: str = "cuda"
     dtype: str = "float32"
-    row_normalize_spectral_embedding: bool = False
     min_segments: int = 2
     kmeans_n_init: int = 10
     seed: int = 0
+    n_neighbors: int = 30  # kNN for the Gaussian affinity (count + spectral loss)
+    scale_k: int = 15
+    is_local_scale: bool = True
+    siamese_weights: str = "checkpoints/siamese/siamese.pt"
     single_speaker: SingleSpeakerConfig = field(default_factory=SingleSpeakerConfig)
+    siamese: SiameseConfig = field(default_factory=SiameseConfig)
+    spectral: SpectralConfig = field(default_factory=SpectralConfig)
 
 
 @dataclass
@@ -70,29 +94,8 @@ class VadConfig:
 
 
 @dataclass
-class AssignmentConfig:
-    enabled: bool = True
-    frame_sec: float = 0.01
-    fill_oracle_speech: bool = True
-
-
-@dataclass
-class DerVariant:
-    name: str
-    collar: float = 0.0
-    skip_overlap: bool = False
-
-
-@dataclass
 class EvaluationConfig:
-    der: bool = True
     rel_error_tol: float = 0.15
-    der_variants: list[DerVariant] = field(
-        default_factory=lambda: [
-            DerVariant("collar250_nooverlap", 0.25, True),
-            DerVariant("strict", 0.0, False),
-        ]
-    )
 
 
 @dataclass
@@ -108,7 +111,6 @@ class Config:
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
     clustering: ClusteringConfig = field(default_factory=ClusteringConfig)
     vad: VadConfig = field(default_factory=VadConfig)
-    assignment: AssignmentConfig = field(default_factory=AssignmentConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
     root: str = "."
@@ -141,8 +143,7 @@ def load_config(path: str | Path, overrides: dict[str, Any] | None = None) -> Co
         embedding=EmbeddingConfig(**raw.get("embedding", {})),
         clustering=_clustering(raw.get("clustering", {})),
         vad=VadConfig(**raw.get("vad", {})),
-        assignment=AssignmentConfig(**raw.get("assignment", {})),
-        evaluation=_evaluation(raw.get("evaluation", {})),
+        evaluation=EvaluationConfig(rel_error_tol=raw.get("evaluation", {}).get("rel_error_tol", 0.15)),
         paths=PathsConfig(**raw.get("paths", {})),
         root=raw.get("root", str(path.resolve().parent.parent)),
     )
@@ -153,16 +154,14 @@ def load_config(path: str | Path, overrides: dict[str, Any] | None = None) -> Co
 def _clustering(raw: dict) -> ClusteringConfig:
     raw = dict(raw)
     single = raw.pop("single_speaker", {})
-    return ClusteringConfig(single_speaker=SingleSpeakerConfig(**single), **raw)
-
-
-def _evaluation(raw: dict) -> EvaluationConfig:
-    raw = dict(raw)
-    variants = raw.pop("der_variants", None)
-    cfg = EvaluationConfig(**raw)
-    if variants is not None:
-        cfg.der_variants = [DerVariant(**v) for v in variants]
-    return cfg
+    siamese = raw.pop("siamese", {})
+    spectral = raw.pop("spectral", {})
+    return ClusteringConfig(
+        single_speaker=SingleSpeakerConfig(**single),
+        siamese=SiameseConfig(**siamese),
+        spectral=SpectralConfig(**spectral),
+        **raw,
+    )
 
 
 def _validate(cfg: Config) -> None:
@@ -176,8 +175,8 @@ def _validate(cfg: Config) -> None:
         raise ValueError("segmentation.min_interval_sec must be >= window_sec (segments must not cross silence)")
     if cfg.clustering.k_max < 1:
         raise ValueError("clustering.k_max must be >= 1")
-    if cfg.clustering.p_min < 1:
-        raise ValueError("clustering.p_min must be >= 1")
+    if cfg.clustering.n_neighbors < 1:
+        raise ValueError("clustering.n_neighbors must be >= 1")
     if cfg.vad.source not in ("oracle", "pyannote"):
         raise ValueError(f"vad.source must be oracle|pyannote, got {cfg.vad.source!r}")
 

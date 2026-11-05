@@ -7,12 +7,36 @@ from pathlib import Path
 
 import numpy as np
 
-from . import assignment, audio, metrics, nme_sc, oracle_vad, rttm
+from . import audio, oracle_vad, rttm, spectralnet
 from .config import Config
-from .embedding import EcapaEmbedder
+from .embedding import EcapaEmbedder, resolve_device
 from .segmentation import Segment, segment_intervals
 
-STAGES = ("segment", "embed", "cluster", "assign", "evaluate")
+STAGES = ("segment", "embed", "cluster", "evaluate")
+
+
+def train_siamese(cfgs: list[Config]) -> Path:
+    """Pool cached embeddings across the given (dev) configs and fit the global Siamese net."""
+    pools = []
+    for cfg in cfgs:
+        for rec in recording_ids(cfg):
+            emb_path = _artifact(cfg, "embeddings", rec, ".npy")
+            if not emb_path.exists():
+                raise FileNotFoundError(
+                    f"{emb_path} missing; run `run.py run --stages segment,embed --config ...` on "
+                    f"{cfg.dataset.name} before training the Siamese net"
+                )
+            emb = np.load(emb_path)
+            if emb.shape[0]:
+                pools.append(emb)
+    if not pools:
+        raise RuntimeError("no embeddings found to train the Siamese net")
+    pooled = np.vstack(pools)
+    base = cfgs[0]
+    out = Path(base.root) / base.clustering.siamese_weights
+    print(f"training Siamese on {pooled.shape[0]:,} pooled embeddings -> {out}", flush=True)
+    spectralnet.train_siamese(pooled, base.clustering, resolve_device(base.clustering.device), out)
+    return out
 
 
 def recording_ids(cfg: Config) -> list[str]:
@@ -109,50 +133,25 @@ def stage_cluster(cfg: Config, rec: str, force: bool = False, progress=None) -> 
     if not embeddings_path.exists():
         raise FileNotFoundError(f"{embeddings_path} missing; run the embed stage for {rec} first")
     embeddings = np.load(embeddings_path)
+    device = resolve_device(cfg.clustering.device)
+    siamese_net = spectralnet.load_siamese(cfg.clustering, Path(cfg.root), device)
     started = time.perf_counter()
-    result = nme_sc.estimate(embeddings, cfg.clustering, progress=progress)
+    result = spectralnet.estimate(embeddings, cfg.clustering, siamese_net, progress=progress)
     elapsed = time.perf_counter() - started
 
     payload = {
         "k_pred": np.int64(result.k),
-        "p_star": np.int64(result.p),
         "n_segments": np.int64(result.n_segments),
         "mean_cosine": np.float64(result.mean_cosine),
         "single_speaker_shortcut": np.bool_(result.single_speaker_shortcut),
         "n_components": np.int64(result.n_components),
         "elapsed_sec": np.float64(elapsed),
-        "p_values": result.p_values,
-        "r_values": result.r_values,
-        "g_values": result.g_values,
-        "max_gap_values": result.max_gap_values,
-        "k_values": result.k_values,
         "eigenvalues": result.eigenvalues,
         "eigengaps": result.eigengaps,
         "labels": result.labels,
     }
     np.savez_compressed(out, **payload)
     return payload
-
-
-# ---------------------------------------------------------------- stage: assign
-
-
-def stage_assign(cfg: Config, rec: str, force: bool = False) -> Path:
-    out = _artifact(cfg, "rttm_hyp", rec, ".rttm")
-    if out.exists() and not force:
-        return out
-
-    payload = stage_segment(cfg, rec)
-    cluster = stage_cluster(cfg, rec)
-    turns = assignment.to_turns(
-        rec,
-        load_segments(payload),
-        cluster["labels"],
-        [(s, e) for s, e in payload["intervals"]],
-        cfg.assignment,
-    )
-    rttm.write_rttm(out, turns)
-    return out
 
 
 # ---------------------------------------------------------------- stage: evaluate
@@ -172,7 +171,6 @@ def stage_evaluate(cfg: Config, recs: list[str]) -> "object":
             "recording_id": rec,
             "k_true": int(payload["k_true"]),
             "k_pred": k_pred,
-            "p_star": int(cluster["p_star"]),
             "n_segments": n_segments,
             "n_components": int(cluster["n_components"]) if "n_components" in cluster else -1,
             "saturated": bool(k_pred > 1 and k_pred == gap_cap),
@@ -182,13 +180,6 @@ def stage_evaluate(cfg: Config, recs: list[str]) -> "object":
             "speech_sec": float(payload["speech_seconds"]),
             "cluster_sec": float(cluster["elapsed_sec"]),
         }
-        if cfg.evaluation.der and cfg.assignment.enabled:
-            hyp_path = _artifact(cfg, "rttm_hyp", rec, ".rttm")
-            if hyp_path.exists():
-                reference = rttm.read_rttm(reference_rttm_path(cfg, rec))
-                hypothesis = rttm.read_rttm(hyp_path)
-                for variant in cfg.evaluation.der_variants:
-                    row.update(metrics.der(reference, hypothesis, rec, variant))
         rows.append(row)
 
     frame = pd.DataFrame(rows)

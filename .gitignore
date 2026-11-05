@@ -81,6 +81,8 @@ htmlcov/
 # Pipeline outputs and downloaded model checkpoints
 work/
 results/
+work_dev/
+results_dev/
 checkpoints/
 
 # Misc

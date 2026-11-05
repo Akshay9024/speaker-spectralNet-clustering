@@ -1,0 +1,55 @@
+# AMI dev split — used only to extract embeddings for Siamese training.
+# Run: run.py run --stages segment,embed --config configs/ami_dev.yaml
+# Embeddings land in work_dev/ami/embeddings/ and feed run.py train.
+
+dataset:
+  name: ami
+  rttm_dir: dataset/ami/rttm/dev
+  audio_dir: dataset/ami/audio/ihm_dev
+  audio_template: "{rec}.Mix-Headset.wav"
+
+paths:
+  work_dir: work_dev
+  results_dir: results_dev
+
+segmentation:
+  window_sec: 1.5
+  hop_sec: 0.75
+  min_interval_sec: 1.5
+  merge_gap_sec: 0.0
+  center_single_window: true
+
+embedding:
+  model: speechbrain/spkrec-ecapa-voxceleb
+  savedir: checkpoints/ecapa
+  sample_rate: 16000
+  batch_size: 128
+  device: cuda
+
+clustering:
+  laplacian: unnormalized
+  k_max: 10
+  device: cuda
+  dtype: float32
+  seed: 0
+  kmeans_n_init: 10
+  n_neighbors: 30
+  scale_k: 15
+  is_local_scale: true
+  siamese_weights: checkpoints/siamese/siamese.pt
+  single_speaker:
+    enabled: false
+    mean_cosine_threshold: 0.50
+  siamese:
+    hiddens: [128, 128, 64]
+    epochs: 30
+    lr: 0.001
+    n_neighbors: 2
+    batch_size: 128
+  spectral:
+    hidden: [128, 128]
+    epochs: 30
+    lr: 0.001
+
+evaluation:
+  rel_error_tol: 0.15

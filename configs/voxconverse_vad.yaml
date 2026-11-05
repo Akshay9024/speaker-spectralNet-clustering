@@ -35,24 +35,28 @@ embedding:
 
 clustering:
   laplacian: unnormalized
-  p_min: 1
-  p_max_ratio: 0.25
-  p_max_abs: null
-  p_stride: 1
   k_max: 21
-  zero_diagonal: true
   device: cpu
   dtype: float32
-  row_normalize_spectral_embedding: false
-  kmeans_n_init: 10
   seed: 0
+  kmeans_n_init: 10
+  n_neighbors: 30
+  scale_k: 15
+  is_local_scale: true
+  siamese_weights: checkpoints/siamese/siamese.pt
   single_speaker:
     enabled: false
     mean_cosine_threshold: 0.50
-
-assignment:
-  enabled: false
+  siamese:
+    hiddens: [128, 128, 64]
+    epochs: 30
+    lr: 0.001
+    n_neighbors: 2
+    batch_size: 128
+  spectral:
+    hidden: [128, 128]
+    epochs: 30
+    lr: 0.001
 
 evaluation:
-  der: false
   rel_error_tol: 0.15

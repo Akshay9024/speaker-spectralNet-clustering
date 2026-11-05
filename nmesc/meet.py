@@ -14,8 +14,9 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from . import nme_sc, plots
+from . import plots, spectralnet
 from .config import load_config
+from .embedding import resolve_device
 from .segmentation import segment_intervals
 
 
@@ -45,13 +46,12 @@ def _external(cfg, wav: Path, device: str, vad) -> tuple[dict, float]:
     else:
         embeddings = np.zeros((0, 192), dtype=np.float32)
 
-    result = nme_sc.estimate(embeddings, replace(cfg.clustering, device=device))
+    clustering = replace(cfg.clustering, device=device)
+    siamese_net = spectralnet.load_siamese(clustering, Path(cfg.root), resolve_device(device))
+    result = spectralnet.estimate(embeddings, clustering, siamese_net)
     data = {
         "k_pred": np.int64(result.k),
-        "p_star": np.int64(result.p),
         "n_segments": np.int64(result.n_segments),
-        "p_values": result.p_values,
-        "r_values": result.r_values,
         "eigenvalues": result.eigenvalues,
         "eigengaps": result.eigengaps,
         "labels": result.labels,
@@ -68,7 +68,6 @@ def _sample_summary(name: str, source: str, k_true: int, data: dict, tol: float)
         ("source", source),
         ("true K", str(k_true)),
         ("predicted K̂", str(k_pred)),
-        ("p*", str(int(data["p_star"]))),
         ("segments", str(int(data["n_segments"]))),
         ("relative error", f"{rel:.4f}"),
         (f"correct (τ={tol})", "yes" if rel <= tol else "no"),
@@ -128,7 +127,7 @@ def run(meet_config: str | Path, token: str | None = None) -> None:
 
 def _write_overview(out_root: Path, table, tol: float) -> None:
     lines = [
-        "# Meeting deliverable — speaker-count via NME-SC (clustering stage only)",
+        "# Meeting deliverable — speaker-count via SpectralNet (clustering stage only)",
         "",
         f"Relative error = |K̂ − K| / K; correct when ≤ τ = {tol}.",
         "",

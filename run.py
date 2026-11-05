@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NME-SC speaker-count baseline: stage runner and inspector."""
+"""SpectralNet speaker-count pipeline: stage runner, Siamese trainer and inspector."""
 
 from __future__ import annotations
 
@@ -82,17 +82,13 @@ def cmd_run(args) -> None:
 
             def progress(done, total, bar=bar, rec=rec):
                 if bar["inner"] is None:
-                    bar["inner"] = tqdm(total=total, desc=f"  {rec} p-sweep", leave=False)
+                    bar["inner"] = tqdm(total=total, desc=f"  {rec} spectral", leave=False)
                 bar["inner"].update(done - bar["inner"].n)
 
             result = pipeline.stage_cluster(cfg, rec, force=args.force, progress=progress)
             if bar["inner"] is not None:
                 bar["inner"].close()
-            outer.set_postfix(k=int(result["k_pred"]), p=int(result["p_star"]))
-
-    if "assign" in stages and cfg.assignment.enabled:
-        for rec in tqdm(recs, desc="assign"):
-            pipeline.stage_assign(cfg, rec, force=args.force)
+            outer.set_postfix(k=int(result["k_pred"]))
 
     if "evaluate" in stages:
         frame = pipeline.stage_evaluate(cfg, recs)
@@ -111,6 +107,12 @@ def cmd_report(args) -> None:
     frame = pd.read_csv(csv)
     print(report.build(cfg, frame))
     print(f"\nwrote {report.write(cfg, frame)}", flush=True)
+
+
+def cmd_train(args) -> None:
+    cfgs = [load_config(c, dict(args.set or [])) for c in args.config]
+    out = pipeline.train_siamese(cfgs)
+    print(f"wrote {out}", flush=True)
 
 
 def cmd_meet(args) -> None:
@@ -147,32 +149,18 @@ def cmd_inspect(args) -> None:
     with np.load(npz_path) as data:
         k_pred = int(data["k_pred"])
         print(f"K̂               : {k_pred}   (true {payload['k_true']})")
-        print(f"p*              : {int(data['p_star'])}")
         if "n_components" in data.files:
-            print(f"affinity comps  : {int(data['n_components'])}  (connected components of binarised affinity at p*)")
+            print(f"affinity comps  : {int(data['n_components'])}  (connected components of the Siamese affinity graph)")
         gap_cap = min(cfg.clustering.k_max, int(data["n_segments"]) - 1)
         if k_pred > 1 and k_pred == gap_cap:
             print(f"K_max saturation: YES (K̂ == min(k_max, N-1) == {gap_cap}) -- estimator hit the ceiling")
         print(f"mean off-diag cos: {float(data['mean_cosine']):.4f}")
         print(f"clustering time : {float(data['elapsed_sec']):.2f} s")
 
-        p_values, r_values = data["p_values"], data["r_values"]
-        if len(p_values):
-            best = int(np.argmin(r_values))
-            print(f"\nr(p) sweep over p in [{p_values[0]}, {p_values[-1]}] "
-                  f"({len(p_values)} points), min at p={p_values[best]}:")
-            step = max(1, len(p_values) // args.rows)
-            shown = sorted(set(list(range(0, len(p_values), step)) + [best]))
-            print(f"  {'p':>6} {'r(p)':>12} {'g_p':>12} {'max gap':>12} {'k@p':>5}")
-            for i in shown:
-                mark = "  <- p*" if i == best else ""
-                print(f"  {p_values[i]:>6} {r_values[i]:>12.4f} {data['g_values'][i]:>12.6f} "
-                      f"{data['max_gap_values'][i]:>12.6f} {data['k_values'][i]:>5}{mark}")
-
         eigenvalues, eigengaps = data["eigenvalues"], data["eigengaps"]
         if len(eigenvalues):
             top = min(len(eigengaps), cfg.clustering.k_max + 3)
-            print(f"\nsmallest eigenvalues and gaps at p* (k_max={cfg.clustering.k_max}):")
+            print(f"\nsmallest eigenvalues and gaps of the Siamese-affinity Laplacian (k_max={cfg.clustering.k_max}):")
             print(f"  {'i':>4} {'lambda_i':>14} {'gap_i = l(i+1)-l(i)':>22}")
             for i in range(top):
                 mark = "  <- K̂" if i + 1 == int(data["k_pred"]) else ""
@@ -183,9 +171,6 @@ def cmd_inspect(args) -> None:
         if len(labels):
             uniq, counts = np.unique(labels, return_counts=True)
             print(f"\nsegment labels  : {dict(zip(uniq.tolist(), counts.tolist()))}")
-
-    hyp = cfg.work / "rttm_hyp" / f"{rec}.rttm"
-    print(f"hypothesis rttm : {hyp if hyp.exists() else 'not written yet'}")
 
 
 def main() -> None:
@@ -205,10 +190,15 @@ def main() -> None:
     run.add_argument("--force", action="store_true", help="recompute even if artifacts exist")
     run.set_defaults(func=cmd_run)
 
+    train = sub.add_parser("train", help="train the global Siamese affinity net on pooled dev embeddings")
+    train.add_argument("--config", required=True, action="append", metavar="CONFIG",
+                       help="dev config(s); repeat to pool across datasets, e.g. --config a.yaml --config b.yaml")
+    train.add_argument("--set", action="append", type=_parse_override, metavar="KEY=VALUE")
+    train.set_defaults(func=cmd_train)
+
     inspect = sub.add_parser("inspect", help="dump intermediates for one recording")
     common(inspect)
     inspect.add_argument("recording")
-    inspect.add_argument("--rows", type=int, default=20, help="rows of the r(p) sweep to print")
     inspect.set_defaults(func=cmd_inspect)
 
     rep = sub.add_parser("report", help="rebuild summary.md from predictions.csv")

@@ -31,7 +31,7 @@ def eigen_figure(
     ax_lambda.axvline(k_true, color="#2ca02c", ls=":", label=f"K = {k_true}")
     ax_lambda.set_xlabel("eigenvalue index i")
     ax_lambda.set_ylabel("$\\lambda_i$")
-    ax_lambda.set_title("Smallest eigenvalues at p*")
+    ax_lambda.set_title("Smallest eigenvalues of the Siamese-affinity Laplacian")
     ax_lambda.legend()
 
     colors = ["#d62728" if i == k_pred else "#7f7f7f" for i in idx]
@@ -44,20 +44,6 @@ def eigen_figure(
     ax_gap.set_title(f"Max eigengap at k = {k_pred} → K̂ = {k_pred}")
     ax_gap.legend()
 
-    fig.tight_layout()
-    fig.savefig(out, dpi=150)
-    plt.close(fig)
-
-
-def psweep_figure(p_values: np.ndarray, r_values: np.ndarray, p_star: int, out: Path) -> None:
-    """The NME ratio r(p) over the p sweep; p* = argmin r(p)."""
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.semilogy(p_values, r_values, "-", color="#1f77b4")
-    ax.axvline(p_star, color="#d62728", ls="--", label=f"p* = {p_star}")
-    ax.set_xlabel("p (nearest neighbours per row)")
-    ax.set_ylabel("r(p) = p / max-eigengap ratio (log scale)")
-    ax.set_title("NME ratio sweep — p* minimises r(p)")
-    ax.legend()
     fig.tight_layout()
     fig.savefig(out, dpi=150)
     plt.close(fig)
@@ -106,11 +92,6 @@ def render_all(data: dict, k_true: int, k_max: int, duration: float, out_dir: Pa
         eigen = out_dir / "eigen.png"
         eigen_figure(data["eigenvalues"], data["eigengaps"], k_pred, k_true, k_max, eigen)
         paths.append(eigen)
-
-    if len(data["p_values"]):
-        psweep = out_dir / "psweep.png"
-        psweep_figure(data["p_values"], data["r_values"], int(data["p_star"]), psweep)
-        paths.append(psweep)
 
     clustering = out_dir / "clustering.png"
     clustering_figure(data["labels"], k_pred, k_true, clustering)

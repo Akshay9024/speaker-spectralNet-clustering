@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import Config
-from .metrics import confusion, count_metrics, relative_count_metrics, weighted_der
+from .metrics import confusion, count_metrics, relative_count_metrics
 
 
 def _table(header: list[str], rows: list[list[str]]) -> str:
@@ -21,7 +21,7 @@ def build(cfg: Config, frame) -> str:
     clustering = cfg.clustering
 
     parts = [
-        f"# NME-SC speaker-count baseline — {cfg.dataset.name}",
+        f"# SpectralNet speaker-count — {cfg.dataset.name}",
         "",
         "## Configuration",
         "",
@@ -38,11 +38,12 @@ def build(cfg: Config, frame) -> str:
                 ],
                 ["Laplacian", clustering.laplacian],
                 [
-                    "p sweep",
-                    f"[{clustering.p_min}, floor({clustering.p_max_ratio}·N)]"
-                    + (f" capped at {clustering.p_max_abs}" if clustering.p_max_abs else "")
-                    + (f", stride {clustering.p_stride}" if clustering.p_stride > 1 else ""),
+                    "Affinity kNN",
+                    f"n_neighbors={clustering.n_neighbors}, scale_k={clustering.scale_k}, "
+                    f"{'local' if clustering.is_local_scale else 'global'} scale",
                 ],
+                ["Siamese hiddens", str(clustering.siamese.hiddens)],
+                ["Spectral hidden", f"{clustering.spectral.hidden} + K"],
                 ["k_max", str(clustering.k_max)],
                 [
                     "Single-speaker shortcut",
@@ -80,33 +81,6 @@ def build(cfg: Config, frame) -> str:
             ],
         ),
     ]
-
-    der_columns = [c for c in frame.columns if c.startswith("der_")]
-    if der_columns:
-        rows = []
-        for column in der_columns:
-            name = column[len("der_") :]
-            rows.append(
-                [
-                    name,
-                    f"{weighted_der(frame, name) * 100:.2f}",
-                    f"{frame[column].mean() * 100:.2f}",
-                    f"{frame[f'miss_{name}'].mean() * 100:.2f}",
-                    f"{frame[f'fa_{name}'].mean() * 100:.2f}",
-                    f"{frame[f'conf_{name}'].mean() * 100:.2f}",
-                ]
-            )
-        parts += [
-            "",
-            "## Diarization error rate (%)",
-            "",
-            "Duration-weighted is the corpus-level DER; the remaining columns are unweighted "
-            "per-recording means.",
-            "",
-            _table(
-                ["Variant", "Duration-weighted", "Mean", "Miss", "False alarm", "Confusion"], rows
-            ),
-        ]
 
     rows_k, cols_k, matrix = confusion(frame["k_true"].to_numpy(), frame["k_pred"].to_numpy())
     parts += [
@@ -147,7 +121,6 @@ def build(cfg: Config, frame) -> str:
         f"- Segments: {int(frame['n_segments'].sum()):,} across {len(frame)} recordings "
         f"(min {int(frame['n_segments'].min())}, median {int(frame['n_segments'].median())}, "
         f"max {int(frame['n_segments'].max())}).",
-        f"- p* range observed: {int(frame['p_star'].min())}–{int(frame['p_star'].max())}.",
         f"- Clustering wall time: {frame['cluster_sec'].sum() / 60:.1f} min total.",
     ]
     if "n_components" in frame.columns:
