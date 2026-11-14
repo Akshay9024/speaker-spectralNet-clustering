@@ -102,6 +102,7 @@ class EvaluationConfig:
 class PathsConfig:
     work_dir: str = "work"
     results_dir: str = "results"
+    results_subdir: str = ""  # per-run label, e.g. normalised; keeps each run's output separate
 
 
 @dataclass
@@ -124,7 +125,10 @@ class Config:
 
     @property
     def results(self) -> Path:
-        return self.path(self.paths.results_dir, self.dataset.name)
+        parts = [self.paths.results_dir, self.dataset.name]
+        if self.paths.results_subdir:
+            parts.append(self.paths.results_subdir)
+        return self.path(*parts)
 
 
 def load_config(path: str | Path, overrides: dict[str, Any] | None = None) -> Config:
