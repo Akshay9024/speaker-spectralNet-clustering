@@ -12,9 +12,9 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from nmesc import pipeline, report  # noqa: E402
-from nmesc.config import load_config  # noqa: E402
-from nmesc.embedding import EcapaEmbedder, resolve_device  # noqa: E402
+from spectralclustering import pipeline, report  # noqa: E402
+from spectralclustering.config import load_config  # noqa: E402
+from spectralclustering.embedding import EcapaEmbedder, resolve_device  # noqa: E402
 
 
 def _parse_override(text: str):
@@ -54,7 +54,7 @@ def cmd_run(args) -> None:
     if "segment" in stages:
         vad = None
         if cfg.vad.source == "pyannote":
-            from nmesc.vad import SegmentationVad
+            from spectralclustering.vad import SegmentationVad
 
             vad = SegmentationVad(
                 model=cfg.vad.model,
@@ -116,7 +116,7 @@ def cmd_train(args) -> None:
 
 
 def cmd_meet(args) -> None:
-    from nmesc import meet
+    from spectralclustering import meet
 
     meet.run(args.meet_config, token=args.token)
 

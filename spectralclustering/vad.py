@@ -1,7 +1,7 @@
 """Speech-region VAD for audio without a reference RTTM, via pyannote/segmentation-3.0.
 
 Replaces the oracle RTTM mask in oracle_vad for external audio. It only supplies
-speech intervals; the speaker count is still estimated by NME-SC downstream.
+speech intervals; the speaker count is still estimated by the SpectralNet backend downstream.
 """
 
 from __future__ import annotations

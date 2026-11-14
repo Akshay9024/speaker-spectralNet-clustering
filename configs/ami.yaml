@@ -1,8 +1,8 @@
 dataset:
   name: ami
-  rttm_dir: dataset/ami/rttm/test
-  audio_dir: dataset/ami/audio/ihm
-  audio_template: "{rec}.Mix-Headset.wav"
+  rttm_dir: dataset/rttms/test
+  audio_dir: dataset/test
+  audio_template: "{rec}.wav"
 
 segmentation:
   window_sec: 1.5

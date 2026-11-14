@@ -4,9 +4,9 @@
 
 dataset:
   name: ami
-  rttm_dir: dataset/ami/rttm/dev
-  audio_dir: dataset/ami/audio/ihm_dev
-  audio_template: "{rec}.Mix-Headset.wav"
+  rttm_dir: dataset/rttms/dev
+  audio_dir: dataset/dev
+  audio_template: "{rec}.wav"
 
 paths:
   work_dir: work_dev
