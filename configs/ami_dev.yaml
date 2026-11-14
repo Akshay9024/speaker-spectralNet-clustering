@@ -1,6 +1,5 @@
-# AMI dev split — used only to extract embeddings for Siamese training.
-# Run: run.py run --stages segment,embed --config configs/ami_dev.yaml
-# Embeddings land in work_dev/ami/embeddings/ and feed run.py train.
+# AMI dev split — held-out validation (the Siamese trains on configs/ami_train.yaml).
+# Run: run.py run --config configs/ami_dev.yaml
 
 dataset:
   name: ami
