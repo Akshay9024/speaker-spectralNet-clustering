@@ -59,6 +59,13 @@ def _artifact(cfg: Config, stage: str, rec: str, suffix: str) -> Path:
     return path
 
 
+def clustering_artifact(cfg: Config, rec: str) -> Path:
+    """Clustering npz, nested under results_subdir so each experiment caches separately."""
+    sub = cfg.paths.results_subdir
+    stage = f"clustering/{sub}" if sub else "clustering"
+    return _artifact(cfg, stage, rec, ".npz")
+
+
 # ---------------------------------------------------------------- stage: segment
 
 
@@ -123,7 +130,7 @@ def stage_embed(cfg: Config, rec: str, embedder: EcapaEmbedder, force: bool = Fa
 
 
 def stage_cluster(cfg: Config, rec: str, force: bool = False, progress=None) -> dict:
-    out = _artifact(cfg, "clustering", rec, ".npz")
+    out = clustering_artifact(cfg, rec)
     if out.exists() and not force:
         with np.load(out, allow_pickle=False) as data:
             return {k: data[k] for k in data.files}

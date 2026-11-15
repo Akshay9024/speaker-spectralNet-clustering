@@ -141,7 +141,7 @@ def cmd_inspect(args) -> None:
         print(f"embeddings      : {embeddings.shape} dtype={embeddings.dtype} "
               f"L2 norm in [{norms.min():.4f}, {norms.max():.4f}]")
 
-    npz_path = cfg.work / "clustering" / f"{rec}.npz"
+    npz_path = pipeline.clustering_artifact(cfg, rec)
     if not npz_path.exists():
         print("clustering      : not run yet")
         return
