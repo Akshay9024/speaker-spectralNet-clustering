@@ -53,35 +53,33 @@ class SiameseConfig:
 
 
 @dataclass
-class SpectralConfig:
-    hidden: list[int] = field(default_factory=lambda: [128, 128])  # output dim K appended at runtime
-    epochs: int = 30
-    lr: float = 1e-3
-    lr_decay: float = 0.1
-    min_lr: float = 1e-8
-    patience: int = 10
-
-
-@dataclass
 class ClusteringConfig:
-    """SpectralNet backend: learned Siamese affinity, eigengap count, spectral-map labels."""
+    """NME-SC speaker count on Siamese-learned embeddings (Park et al. 2020, arXiv:2003.02405).
 
-    # "unnormalized" is L = D - W; "sym_norm" is I - D^-1/2 W D^-1/2.
+    Cosine affinity over the Siamese output (or raw ECAPA when use_siamese is False) is
+    binarised at a swept neighbour count p; p* minimises p / normalised-max-eigengap, and
+    the count is the eigengap at p*.
+    """
+
+    # "unnormalized" is L = D - A; "sym_norm" is I - D^-1/2 A D^-1/2.
     laplacian: str = "unnormalized"
+    p_min: int = 1
+    p_max_ratio: float = 0.25
+    p_max_abs: int | None = None
+    p_stride: int = 1
     k_max: int = 10
+    zero_diagonal: bool = True
     eps: float = 1e-10
     device: str = "cuda"
     dtype: str = "float32"
+    row_normalize_spectral_embedding: bool = False
+    use_siamese: bool = True  # False = NME-SC on raw ECAPA (Siamese-bypass ablation)
     min_segments: int = 2
     kmeans_n_init: int = 10
     seed: int = 0
-    n_neighbors: int = 30  # kNN for the Gaussian affinity (count + spectral loss)
-    scale_k: int = 15
-    is_local_scale: bool = True
     siamese_weights: str = "checkpoints/siamese/siamese.pt"
     single_speaker: SingleSpeakerConfig = field(default_factory=SingleSpeakerConfig)
     siamese: SiameseConfig = field(default_factory=SiameseConfig)
-    spectral: SpectralConfig = field(default_factory=SpectralConfig)
 
 
 @dataclass
@@ -159,11 +157,11 @@ def _clustering(raw: dict) -> ClusteringConfig:
     raw = dict(raw)
     single = raw.pop("single_speaker", {})
     siamese = raw.pop("siamese", {})
-    spectral = raw.pop("spectral", {})
+    for retired in ("spectral", "n_neighbors", "scale_k", "is_local_scale"):
+        raw.pop(retired, None)  # removed with the SpectralNet backend; tolerated for legacy configs
     return ClusteringConfig(
         single_speaker=SingleSpeakerConfig(**single),
         siamese=SiameseConfig(**siamese),
-        spectral=SpectralConfig(**spectral),
         **raw,
     )
 
@@ -179,8 +177,10 @@ def _validate(cfg: Config) -> None:
         raise ValueError("segmentation.min_interval_sec must be >= window_sec (segments must not cross silence)")
     if cfg.clustering.k_max < 1:
         raise ValueError("clustering.k_max must be >= 1")
-    if cfg.clustering.n_neighbors < 1:
-        raise ValueError("clustering.n_neighbors must be >= 1")
+    if cfg.clustering.p_min < 1:
+        raise ValueError("clustering.p_min must be >= 1")
+    if not 0.0 < cfg.clustering.p_max_ratio <= 1.0:
+        raise ValueError("clustering.p_max_ratio must be in (0, 1]")
     if cfg.vad.source not in ("oracle", "pyannote"):
         raise ValueError(f"vad.source must be oracle|pyannote, got {cfg.vad.source!r}")
 

@@ -21,7 +21,7 @@ def build(cfg: Config, frame) -> str:
     clustering = cfg.clustering
 
     parts = [
-        f"# SpectralNet speaker-count — {cfg.dataset.name}",
+        f"# NME-SC speaker-count — {cfg.dataset.name}",
         "",
         "## Configuration",
         "",
@@ -37,13 +37,14 @@ def build(cfg: Config, frame) -> str:
                     else f"pyannote ({cfg.vad.model})",
                 ],
                 ["Laplacian", clustering.laplacian],
+                ["Count input", "Siamese embedding" if clustering.use_siamese else "raw ECAPA"],
                 [
-                    "Affinity kNN",
-                    f"n_neighbors={clustering.n_neighbors}, scale_k={clustering.scale_k}, "
-                    f"{'local' if clustering.is_local_scale else 'global'} scale",
+                    "NME-SC p-grid",
+                    f"p_min={clustering.p_min}, p_max_ratio={clustering.p_max_ratio}, "
+                    f"stride={clustering.p_stride}"
+                    + (f", p_max_abs={clustering.p_max_abs}" if clustering.p_max_abs is not None else ""),
                 ],
                 ["Siamese hiddens", str(clustering.siamese.hiddens)],
-                ["Spectral hidden", f"{clustering.spectral.hidden} + K"],
                 ["k_max", str(clustering.k_max)],
                 [
                     "Single-speaker shortcut",
